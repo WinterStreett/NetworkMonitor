@@ -1,0 +1,105 @@
+#ifndef BPFTRACE_HAVE_BTF
+#include <net/tcp_states.h>
+#include <net/sock.h>
+#include <linux/socket.h>
+#include <linux/tcp.h>
+#else
+#include <sys/socket.h>
+#endif
+
+BEGIN
+{
+	printf("%-15s  %-15s  ",
+	    "SADDR",  "DADDR");
+	printf("%15s %15s %15s \n", "TX_KB", "RX_KB", "latency_ms");
+}
+
+kprobe:tcp_set_state
+{
+	$sk = (struct sock *)arg0;
+	$newstate = arg1;
+
+	// record first timestamp seen for this socket
+
+    if(($sk->__sk_common.skc_rcv_saddr!=16777343)||($sk->__sk_common.skc_daddr!=16777343))
+    {
+    
+	if ($newstate < TCP_FIN_WAIT1 && @birth[$sk] == 0) {
+		@birth[$sk] = nsecs;
+	}
+
+	// record PID & comm on SYN_SENT
+	if ($newstate == TCP_SYN_SENT || $newstate == TCP_LAST_ACK) {
+		@skpid[$sk] = pid;
+		@skcomm[$sk] = comm;
+	}
+
+	// session ended: calculate lifespan and print
+	if ($newstate == TCP_CLOSE && @birth[$sk]) {
+		$delta_ms = (nsecs - @birth[$sk]) / 1e6;
+
+		$tp = (struct tcp_sock *)$sk;
+		$srtt = $tp->srtt_us >> 3;
+		$srtt /= 1000;
+		$pid = @skpid[$sk];
+		$comm = @skcomm[$sk];
+		if ($comm == "") {
+			// not cached, use current task
+			$pid = pid;
+			$comm = comm;
+		}
+
+		$family = $sk->__sk_common.skc_family;
+		$saddr = ntop(0);
+		$daddr = ntop(0);
+		if ($family == AF_INET) {
+			$saddr = ntop(AF_INET, $sk->__sk_common.skc_rcv_saddr);
+			$daddr = ntop(AF_INET, $sk->__sk_common.skc_daddr);
+            
+		} else {
+			// AF_INET6
+			$saddr = ntop(AF_INET6,
+			    $sk->__sk_common.skc_v6_rcv_saddr.in6_u.u6_addr8);
+			$daddr = ntop(AF_INET6,
+			    $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8);
+		}
+
+        if(@send_size[$saddr,$daddr])
+        {
+            @send_size[$saddr,$daddr] +=  ($tp->bytes_acked / 1024);
+        }
+        else
+        {
+            @send_size[$saddr,$daddr] =  ($tp->bytes_acked / 1024);
+        }
+
+        if(@recv_size[$saddr,$daddr])
+        {
+            @recv_size[$saddr,$daddr] += ($tp->bytes_received / 1024);
+        }
+        else
+        {
+            @recv_size[$saddr,$daddr] = ($tp->bytes_received / 1024);
+        }
+
+		//@send_size[$saddr,$daddr] =  ($tp->bytes_acked / 1024);
+		//@recv_size[$saddr,$daddr] = ($tp->bytes_received / 1024);
+
+        printf("%-15s  %-15s ", $saddr, $daddr);
+        printf("%15d %15d %15d \n", @send_size[$saddr,$daddr],
+        @recv_size[$saddr,$daddr], $srtt);
+
+		
+
+		delete(@birth[$sk]);
+		delete(@skpid[$sk]);
+		delete(@skcomm[$sk]);
+	}
+    }
+}
+
+END
+{
+	clear(@birth); clear(@skpid); clear(@skcomm);
+    clear(@send_size); clear(@recv_size);
+}
