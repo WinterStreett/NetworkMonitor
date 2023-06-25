@@ -17,6 +17,7 @@ SADDR            DADDR                      TX_KB           RX_KB      latency_m
 
 ### 用法
 需要安装bpftrace，安装方法可参照官方文档。
+
 在ubuntu20.04中安装bpftrace：
 ```shell
 sudo apt-get install -y bpftrace
@@ -29,6 +30,7 @@ sudo bpftrace monitor.bt
 
 ### 已知问题
 安装bpftrace后，可能还需要安装[bpftrace debugging symbols](https://wiki.ubuntu.com/Debug%20Symbol%20Packages)才能正常启动bpftrace程序。
+
 安装文档完成Getting -dbgsym.ddeb packages部分的操作，最后执行：
 ```shell
 sudo apt-get install bpftrace-dbgsym
